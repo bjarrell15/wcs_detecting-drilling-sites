@@ -240,42 +240,41 @@ tf.keras.utils.plot_model(UNet,show_shapes=True)
 
 """# Train the model"""
 
-# From an article I read:
-"""
-This option is known as online augmentation, or augmentation on the fly.
-This method is preferred for larger datasets, as you can’t afford the explosive increase in size.
-Instead, you would perform transformations on the mini-batches that you would feed to your model.
-Some machine learning frameworks have support for online augmentation, which can be accelerated on the GPU.
-"""
-# Augmentation function to pass to Callback class.
-def augment(image, mask):
-  rand = np.random.randint(100)
-  
-  if rand < 20:
-    image = tf.image.flip_left_right(image)
-    mask = tf.image.flip_left_right(mask)
+def augmentation(img, msk):
 
-  elif rand >= 20 and rand < 40:
-    image = tf.image.rot90(image)
-    mask = tf.image.rot90(mask)
+  # Call in skimage package, which will be used for transformations.
+  import tensorflow.math as Math
 
-  elif rand >= 40 and rand < 60:
-    image = tf.image.flip_up_down(image)
-    mask = tf.image.flip_up_down(mask)
+  # Create some random floats, which will be used in augmentation steps.
+  tilt = tf.random.uniform(shape = [], minval = -30, maxval = 30, dtype = tf.float32)
+  dx = tf.random.uniform(shape = [], minval = -5, maxval = 5, dtype = tf.float32)
+  dy = tf.random.uniform(shape = [], minval = -5, maxval = 5, dtype = tf.float32)
 
-  elif rand >= 60 and rand < 80:
-    image = tf.image.flip_up_down(image)
-    mask = tf.image.flip_up_down(mask)
+  # Use TensforFlow-style if conditionals, used to flip image and mask.
+  img = tf.cond(tilt > 0, lambda: tf.image.flip_left_right(img), lambda: tf.image.flip_up_down(img))
+  msk = tf.cond(tilt > 0, lambda: tf.image.flip_left_right(msk), lambda: tf.image.flip_up_down(msk))
 
-  else:
-    pass
+  # Rotate the image and mask to some degree.
+  # img = rotate(img, angle = tilt, mode = 'reflect')
+  # msk = rotate(msk, angle = tilt, mode = 'reflect')
+  toRads = Math.multiply(Math.divide(tilt,180),tf.constant(math.pi))
 
-  return (image, mask)
+  img = tfa.image.rotate(img, toRads)
+  msk = tfa.image.rotate(msk, toRads)
+ 
+  # Affine transformation
+  img = tfa.image.translate(img, [dx,dy], 'BILINEAR')
+  msk = tfa.image.translate(msk, [dx,dy], 'BILINEAR')
+
+  # Convert the inputs back into tensors, put back into a tuple.
+  finalTuple = (img, msk)
+
+  return finalTuple
 
 # Callback for data augmentation.
 class aug(tf.keras.callbacks.Callback):
   def on_training_batch_begin(self, batch, logs = None):
-    batch.map(augment, num_parallel_calls = 5)
+    batch.map(augmentation, num_parallel_calls = 5)
     batch.shuffle(10)
     
 # Trying early stopping on 07/22.
@@ -284,7 +283,7 @@ earlyStopper = tf.keras.callbacks.EarlyStopping(patience=5, verbose=1)
 save_model_path = f'/content/gdrive/My Drive/{today}_wellpad_model.h5'
 cp = tf.keras.callbacks.ModelCheckpoint(filepath=save_model_path,
                                         monitor='val_dice_loss',
-                                        mode='max',
+                                        mode='min',
                                         save_best_only=True)
 
 # Sanity check
@@ -303,7 +302,7 @@ plt.subplot(1,2,2)
 plt.imshow(tf.squeeze(test_batch[0][1][0]))
 
 # Set number of epochs over which to fit the model here.
-model_epochs = 50
+model_epochs = 100
 
 # Let's give it a go.
 history = UNet.fit(
@@ -317,9 +316,7 @@ history = UNet.fit(
 UNet.save(f'/content/gdrive/My Drive/{today}_wellpad_model.h5')
 
 training_acc = history.history['dice_loss']
-# training_meanIoU = history.history['mean_io_u_6']
 validation_acc = history.history['val_dice_loss']
-# validation_meanIoU = history.history['val_mean_io_u_6']
 
 training_loss = history.history['loss']
 validation_loss = history.history['val_loss']
